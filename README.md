@@ -1,63 +1,269 @@
 # PDF Report Generator
 
-A small backend feature: query sales data with SQL, render it into a real PDF
-report, and serve it by link. Built for FlyRank Internship, Backend Track,
-Week 4, Assignment A8.
+A FastAPI service that generates PDF sales reports from SQLite data using Playwright and Chromium.
 
-## What this is
+## Features
 
-An API with three endpoints:
-- `POST /reports` — generates a sales report PDF from `report.db` and returns its id + download link
-- `GET /reports/{id}` — returns the report's metadata
-- `GET /reports/{id}/file` — downloads the actual PDF
+- FastAPI REST API
+- SQLite database with seeded sales data
+- Sales aggregation using SQL
+- HTML report generation
+- PDF rendering with Playwright + Chromium
+- Idempotent daily report generation
+- `force=true` support for generating a fresh report
+- PDF file download endpoint
+- Report metadata endpoint
+- Health check endpoint
 
-Dataset: the "little shop" — ~200 seeded fake orders (customer, product, amount, date).
+## Tech Stack
 
-## How to run it
+- Python 3.12
+- FastAPI
+- SQLite
+- Playwright
+- Chromium
+- Uvicorn
 
-```bash
-# 1. create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+## Project Structure
 
-# 2. install dependencies
-pip install -r requirements.txt
-playwright install chromium
+```text
+pdf-report-generator/
+├── main.py
+├── db.py
+├── seed.py
+├── report.py
+├── requirements.txt
+├── README.md
+├── report.db
+└── reports/
+    ├── 1.pdf
+    └── 2.pdf
+```
 
-# 3. seed the database (safe to run more than once)
+## Setup
+
+### 1. Create a virtual environment
+
+```powershell
+py -3.12 -m venv venv
+```
+
+Activate it:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+### 2. Install dependencies
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+### 3. Install Chromium
+
+```powershell
+python -m playwright install chromium
+```
+
+### 4. Seed the database
+
+```powershell
 python seed.py
-
-# 4. start the API
-uvicorn main:app --reload --port 8000
 ```
 
-Then, in another terminal:
+## Run the API
 
-```bash
-# generate a report (takes a few seconds — that's expected)
-time curl -i -X POST http://localhost:8000/reports
+Start the server with:
 
-# download it
-curl -o my-report.pdf http://localhost:8000/reports/1/file
+```powershell
+uvicorn main:app --port 8000
 ```
 
-## Aggregation SQL (Stage 2)
+> On Windows, run without `--reload` because Playwright/Chromium subprocess handling can fail with Uvicorn's reload process.
 
-TODO: paste the four queries from `report.py` here.
+The API will be available at:
 
-## Proof: generate → download
+```text
+http://localhost:8000
+```
 
-TODO: paste your terminal output from the POST + curl download above.
+## API Endpoints
 
-## Stage 4 — why not do this in the request forever?
+### Health Check
 
-TODO: one sentence — at what point would you move this work into a background job?
+```http
+GET /health
+```
 
-## Stage 5 — duplicate requests
+Example:
 
-TODO: two sentences — what does the once-per-day check protect against, and a
-real-world example where a missing check like this costs money.
+```powershell
+curl.exe http://localhost:8000/health
+```
 
-## Screenshot
+Response:
 
-TODO: add a screenshot of page 1 of a generated PDF here.
+```json
+{
+  "status": "ok"
+}
+```
+
+### Generate Report
+
+```http
+POST /reports
+```
+
+Example:
+
+```powershell
+curl.exe -X POST http://localhost:8000/reports
+```
+
+First request of the day:
+
+```json
+{
+  "id": 1,
+  "file": "/reports/1/file"
+}
+```
+
+The response uses `201 Created` when a new report is generated.
+
+### Idempotent Report Generation
+
+Calling the same endpoint again on the same day returns the existing report instead of generating another PDF.
+
+```powershell
+curl.exe -X POST http://localhost:8000/reports
+```
+
+Response:
+
+```json
+{
+  "id": 1,
+  "file": "/reports/1/file"
+}
+```
+
+The repeated request returns `200 OK`.
+
+### Force a New Report
+
+Use:
+
+```json
+{
+  "force": true
+}
+```
+
+PowerShell:
+
+```powershell
+$body = @{ force = $true } | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://localhost:8000/reports" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+This generates a new report ID and PDF.
+
+Example:
+
+```json
+{
+  "id": 2,
+  "file": "/reports/2/file"
+}
+```
+
+### Get Report Metadata
+
+```http
+GET /reports/{id}
+```
+
+Example:
+
+```powershell
+curl.exe http://localhost:8000/reports/1
+```
+
+Response:
+
+```json
+{
+  "id": 1,
+  "created_at": "2026-09-03",
+  "file": "/reports/1/file"
+}
+```
+
+### Download PDF
+
+```http
+GET /reports/{id}/file
+```
+
+Example:
+
+```powershell
+curl.exe http://localhost:8000/reports/1/file -o report.pdf
+```
+
+The endpoint returns the generated PDF with:
+
+```text
+Content-Type: application/pdf
+```
+
+## Report Contents
+
+Each generated PDF contains:
+
+- Total number of orders
+- Total revenue
+- Top 5 products by revenue
+- Orders per day for the last 7 days
+- Complete orders table
+
+The HTML report uses a repeating table header and prevents individual table rows from being split across PDF pages.
+
+## Verification
+
+The implementation was tested locally with:
+
+- `GET /health` → `200 OK`
+- First `POST /reports` → `201 Created`
+- Repeated `POST /reports` → `200 OK` with the same report ID
+- `force=true` → new report ID with `201 Created`
+- `GET /reports/{id}` → report metadata
+- `GET /reports/{id}/file` → valid generated PDF
+- Playwright + Chromium PDF generation
+- SQLite aggregation queries
+
+Example generated files:
+
+```text
+reports/
+├── 1.pdf
+└── 2.pdf
+```
+
+## Notes
+
+The application uses Python 3.12 because the project's Playwright dependencies are compatible with this environment.
+
+For Windows, the API should be started without Uvicorn's `--reload` option when generating PDFs through Playwright.
+
+## License
+
+This project was created as an assignment demonstrating a FastAPI-based PDF report generation service.
